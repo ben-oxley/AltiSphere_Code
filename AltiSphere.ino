@@ -10,26 +10,26 @@
 
 /*
 Output  0 - RXI                        Output  7 - SERVO DATA
-Output  1 - TXO                        Output  8 - DRIVE ENABLE COMMS
-Output  2 - N/C                        Output  9 - DRIVE COMMS
-Output  3 - N/C                        Output 10 - N/C
-Output  4 - MOSFET ON                  Output 11 - MOSI
-Output  5 - NOT RECEIEVE ENABLE COMMS  Output 12 - MISO
-Output  6 - RECIEVE COMMS              Output 13 - SCK
-
-Servo Goes between 18 and 90
-
-Analog 0 - N/C
-Analog 1 - N/C
-Analog 2 - Pressure Sensor   Vout = VS × (0.2 × P(kPa)+0.5) ± 6.25% VFSS  Voltage is divided by two. Range 0.25-->2.25v Gives a resolution of 6 Pa (4000/(2/(3.3/1024)))
-Analog 3 - N/C
-Analog 4 - Temperature Sensors SDA
-Analog 5 - Temperature Sensors SCL
-Analog 6 - N/C
-Analog 7 - N/C 
-
-Ideal analog divider is 10K and 27K   730, 378, 3
-*/
+ Output  1 - TXO                        Output  8 - DRIVE ENABLE COMMS
+ Output  2 - N/C                        Output  9 - DRIVE COMMS
+ Output  3 - N/C                        Output 10 - N/C
+ Output  4 - MOSFET ON                  Output 11 - MOSI
+ Output  5 - NOT RECEIEVE ENABLE COMMS  Output 12 - MISO
+ Output  6 - RECIEVE COMMS              Output 13 - SCK
+ 
+ Servo Goes between 18 and 90
+ 
+ Analog 0 - N/C
+ Analog 1 - N/C
+ Analog 2 - Pressure Sensor   Vout = VS × (0.2 × P(kPa)+0.5) ± 6.25% VFSS  Voltage is divided by two. Range 0.25-->2.25v Gives a resolution of 6 Pa (4000/(2/(3.3/1024)))
+ Analog 3 - N/C
+ Analog 4 - Temperature Sensors SDA
+ Analog 5 - Temperature Sensors SCL
+ Analog 6 - N/C
+ Analog 7 - N/C 
+ 
+ Ideal analog divider is 10K and 27K   730, 378, 3
+ */
 #include <Arduino.h>
 #include <SoftwareSerial.h>
 #include <Servo.h>
@@ -39,6 +39,7 @@ Ideal analog divider is 10K and 27K   730, 378, 3
 #include <stdlib.h>
 #include <Time.h>  
 #include <ctype.h>
+#include <util/crc16.h>
 
 
 //Time settings
@@ -58,10 +59,15 @@ int lastservopos;
 SoftwareSerial commSerial(6, 9);
 char inData[100];
 char GPStime[20];
-char GPSlat[20];
-char GPSlong[20];
-char GPSalt[20];
-char GPSchecksum[20];
+char GPSlat[10];
+char GPSlong[10];
+char GPSalt[10];
+char GPSchecksum[5];
+float lat;
+float lon;
+float alt;
+boolean validcrc;
+
 
 //Pressure Sensor Variables
 int sensorValue;
@@ -69,7 +75,22 @@ int pressure;
 
 //Time Vars
 TimeElements te;
+
+//Speed Variables
+float speedarray[100];
+int floatindex;
+int timelast;
+float altlast;
+#define MOVINGAVG 10
+
+//Pre-Flight Variables
 #define datenow "030412"
+#define arraysize 6
+int flightalt[] = {
+  0,5000,10000,15000,20000,30000};
+int flightspd[] = {
+  100,50,5,4,3};
+
 
 
 
@@ -91,10 +112,19 @@ void loop() {
   //logit;
   readpressure();
   waitforcomms();
-  logit();
+  
+  if (validcrc) {
   processSetTime();
-  digitalClockDisplay();
-  delay(1000);
+  logspeed();
+  speedavg();
+  flightplan();
+  //servomove();
+  }
+  //failsafe?
+  
+  logit();
+  //digitalClockDisplay();
+  //delay(1000);
 }
 
 void readpressure() {
@@ -126,20 +156,20 @@ void logit() {
 void servopos(int pos) {
   digitalWrite(4,HIGH);
   if (pos != lastservopos)
-  if (pos >= lastservopos)
+    if (pos >= lastservopos)
     {
       for (int x = lastservopos; x <= pos; x++) 
       {
-      vservo.write(x);
-      delay(50);
+        vservo.write(x);
+        delay(50);
       }
     }
-  else
+    else
     {
       for (int x = lastservopos; x >= pos; x--) 
       {
-      vservo.write(x);
-      delay(50);
+        vservo.write(x);
+        delay(50);
       }
     }
   digitalWrite(4,LOW);
@@ -149,31 +179,40 @@ void servopos(int pos) {
 void waitforcomms() {
   byte index = 0;
   while(commSerial.available() > 0)
-   {
-	char aChar = commSerial.read();
-	if(aChar == '\n')
-	{
-	   // End of record detected. Time to parse
-
-	   index = 0;
-	   inData[index] = NULL;
-	}
-	else
-	{
-	   inData[index] = aChar;
-	   index++;
-	   inData[index] = '\0'; // Keep the string NULL terminated
-	}
-   }
-   //char inData[] = "UUUUBEN,18:27:01,52.00000,-0.27585,2981*9ACE";
-   int result = sscanf (inData,"%*[^','],%[^','],%[^','],%[^','],%[^'*']*%s",&GPStime, &GPSlat, &GPSlong, &GPSalt, &GPSchecksum);
-   //Do Checksum
-    /*
-    do
+  {
+    char aChar = commSerial.read();
+    if(aChar == '\n')
     {
-      
-    } while (millis()-TimerA >= 1000UL); */
-        
+      // End of record detected. Time to parse
+
+      index = 0;
+      inData[index] = NULL;
+    }
+    else
+    {
+      inData[index] = aChar;
+      index++;
+      inData[index] = '\0'; // Keep the string NULL terminated
+    }
+  }
+  if (checkcrc() == 0) {
+  validcrc = true
+  //char inData[] = "UUUUBEN,18:27:01,52.00000,-0.27585,2981*9ACE";
+  int result = sscanf (inData,"%*[^','],%[^','],%[^','],%[^','],%[^'*']*%s",&GPStime, &GPSlat, &GPSlong, &GPSalt, &GPSchecksum);
+  
+  lat = atoi(GPSlat);
+  lon = atoi(GPSlong);
+  alt = atoi(GPSalt);
+  } else {
+  validcrc = false
+  }
+  //Do Checksum
+  /*
+    do
+   {
+   
+   } while (millis()-TimerA >= 1000UL); */
+
 }
 
 void sendcomms (String message) {
@@ -196,30 +235,42 @@ void processSetTime(){
   char setString[TIME_SET_StrLen];
   int index = 0;
   for (int i = 0; i < TIME_SET_StrLen; i++) {
-     char c = timedate[i];
-     if( isdigit(c))  // non numeric characters are discarded
-	 setString[index++] = c -'0'; // convert from ascii    
+    char c = timedate[i];
+    if( isdigit(c))  // non numeric characters are discarded
+      setString[index++] = c -'0'; // convert from ascii    
   }
 
 
   breakTime(now(), te);   // put the time now into the TimeElements structure  
-  
-  int count = index;
+
+    int count = index;
   int element = 0;
   for( index = 0; index < count; index += 2)  // step through each pair of digits
   {
-	int val = setString[index] * 10 + setString[index+1] ; // get the numeric value of the next pair of numbers
-	switch( element++){
-	  case  0 :  te.Hour = val; break;
-	  case  1 :  te.Minute = val; break;
-	  case  2 :  te.Second = val; break;
-	  case  3 :  te.Day = val; break;
-	  case  4 :  te.Month= val; break;
-	  case  5 :  te.Year = val + 30; break; // year 0 is 1970	  
-	}    
+    int val = setString[index] * 10 + setString[index+1] ; // get the numeric value of the next pair of numbers
+    switch( element++){
+    case  0 :  
+      te.Hour = val; 
+      break;
+    case  1 :  
+      te.Minute = val; 
+      break;
+    case  2 :  
+      te.Second = val; 
+      break;
+    case  3 :  
+      te.Day = val; 
+      break;
+    case  4 :  
+      te.Month= val; 
+      break;
+    case  5 :  
+      te.Year = val + 30; 
+      break; // year 0 is 1970	  
+    }    
   }
   if (makeTime(te) > now()) setTime( makeTime(te));
-  
+
 }
 
 void digitalClockDisplay(){
@@ -241,10 +292,65 @@ void digitalClockDisplay(){
 void printDigits(int digits){
   // utility function for digital clock display: prints preceding colon and leading 0
   Serial.print(":");
-  if(digits < 10)
+  if(digits < 10) {
     Serial.print('0');
+  }
   Serial.print(digits);
 }
-  
-  
-  
+
+float flightplan(){
+  float targetspeed;
+  for (int i = 0; i < arraysize; i++)
+  {
+    if ( flightalt[i] <= alt) 
+    {
+      targetspeed = flightspd[i];
+    }
+  }
+  return targetspeed;
+}
+
+void logspeed(){
+  if (floatindex >= 99) floatindex = 0;
+  float speednow = (alt - altlast)/(millis()-timelast)/1000;
+  speedarray[floatindex] = speednow;
+  altlast = alt;
+  timelast = millis();
+}
+
+float speedavg(){
+  float speedcalc;
+  for (int i = 0; i <= MOVINGAVG ; i++) {
+    if ((floatindex - i) < 0) {
+      speedcalc += speedarray[ 100 - i + floatindex ];
+    } 
+    else {
+      speedcalc +=speedarray[floatindex - i];
+    }
+  }
+  speedcalc /= MOVINGAVG;
+  return speedcalc;
+}
+
+int checkcrc() {
+  uint8_t crc = 0, i;
+  for (i = 0; i < sizeof inData / sizeof inData[0]; i++) {
+    crc = _crc_ibutton_update(crc, inData[i]);
+  }
+  return crc; // must be 0
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
