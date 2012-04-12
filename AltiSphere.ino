@@ -112,16 +112,16 @@ void loop() {
   //logit;
   readpressure();
   waitforcomms();
-  
+
   if (validcrc) {
-  processSetTime();
-  logspeed();
-  speedavg();
-  flightplan();
-  //servomove();
+    processSetTime();
+    logspeed();
+    speedavg();
+    flightplan();
+    //servomove();
   }
   //failsafe?
-  
+
   logit();
   //digitalClockDisplay();
   //delay(1000);
@@ -195,16 +195,18 @@ void waitforcomms() {
       inData[index] = '\0'; // Keep the string NULL terminated
     }
   }
-  if (checkcrc() == 0) {
-  validcrc = true
-  //char inData[] = "UUUUBEN,18:27:01,52.00000,-0.27585,2981*9ACE";
+  int pointer;
+  while (inData[pointer] != 'B') pointer++;
   int result = sscanf (inData,"%*[^','],%[^','],%[^','],%[^','],%[^'*']*%s",&GPStime, &GPSlat, &GPSlong, &GPSalt, &GPSchecksum);
-  
-  lat = atoi(GPSlat);
-  lon = atoi(GPSlong);
-  alt = atoi(GPSalt);
-  } else {
-  validcrc = false
+  if (CRC16(&inData[pointer]) == int(GPSchecksum)) { //this might die if the data is bad, use watchdog timer
+    validcrc = true;
+    //char inData[] = "UUUUBEN,18:27:01,52.00000,-0.27585,2981*9ACE";  
+    lat = atof(GPSlat); //should be convert to float, change to atof
+    lon = atof(GPSlong);
+    alt = atof(GPSalt);
+  } 
+  else {
+    validcrc = false;
   }
   //Do Checksum
   /*
@@ -332,12 +334,11 @@ float speedavg(){
   return speedcalc;
 }
 
-int checkcrc() {
-  uint8_t crc = 0, i;
-  for (i = 0; i < sizeof inData / sizeof inData[0]; i++) {
-    crc = _crc_ibutton_update(crc, inData[i]);
-  }
-  return crc; // must be 0
+uint16_t CRC16 (char *c)
+{
+  uint16_t crc = 0xFFFF;
+  while (*c && *c != '*') crc = _crc_xmodem_update(crc, *c++);
+  return crc;
 }
 
 
