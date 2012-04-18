@@ -33,7 +33,7 @@
  Analog 7 - N/C 
  
  Ideal analog divider is 10K and 27K   730, 378, 3
-*/
+ */
 
 #include <Arduino.h> //Includes for compiling
 #include <SoftwareSerial.h> //Include for software serial lines
@@ -54,18 +54,18 @@
 
 //Servo Settings
 #define servopin 7 //Digital Pin servo is connected to
-#define servoOpen 255 //Servo open position
-#define servoClosed 1 //Servo closed position
+#define servoOpen 90 //Servo open position
+#define servoClosed 18 //Servo closed position
 Servo vservo; //Create servo object for valve servo
 int lastservopos; //Integer to store the last given position of the servo
 
 //Serial Connection Settings
 SoftwareSerial commSerial(6, 9); //Creates software serial object and defines the tx and rx pins
-char inData[100]; //Character array for serial data recieved
-char GPStime[20]; //Character array to store time string from data recieved
+char inData[60]; //Character array for serial data recieved
+char GPStime[8]; //Character array to store time string from data recieved
 char GPSlat[10]; //Character array to store latitude string from data recieved
 char GPSlong[10]; //Character array to store longitude string from data recieved
-char GPSalt[10]; //Character array to store altitude string from data recieved
+char GPSalt[7]; //Character array to store altitude string from data recieved
 char GPSchecksum[4]; //Character array to store checksum string from data recieved
 float lat; //Float value for latitude
 float lon; //Float value for longitude
@@ -90,8 +90,10 @@ float altlast; //Initialise last recorded altitude variable
 //Pre-Flight Variables
 #define datenow "030412" //Define date today (DDMMYY)
 #define arraysize 6 //Define size of flight altitude array
-int flightalt[] = {0,5000,10000,15000,20000,30000}; //Initialise variable array for altitude control points
-int flightspd[] = {100,50,5,4,3,2}; //Initialise variable array for controlled speeds in m/s
+int flightalt[] = {
+  0,5000,10000,15000,20000,30000}; //Initialise variable array for altitude control points
+int flightspd[] = {
+  100,5,2,2,2,2}; //Initialise variable array for controlled speeds in m/s
 
 void setup() {
   Serial.begin(9600); //Baud rate for logging to openLog
@@ -102,7 +104,8 @@ void setup() {
   vservo.attach(7); //Attach the servo object to pin 7
   Serial.println(); 
   commSerial.begin(9600); //Start softwareSerial for line driver 
-  Serial.println("Run Altisphere Logging"); 
+  Serial.println("Run Altisphere Logging");
+  servopos(18);
 }
 
 //******************************************
@@ -117,14 +120,32 @@ void loop() {
   if (validcrc) {
     processSetTime();
     logspeed();
-    speedavg();
     //servomove();
   }
+  servomove();
   //failsafe?
   logit();
   //digitalClockDisplay();
   //delay(1000);
 }
+
+//******************************************
+//This program controls the servo movements.
+//******************************************
+void servomove() {
+  if ((millis() - timelast) > 3600000) { //If the last GPS lock was an hour ago
+    if (speedavg() > flightplan()) {
+      servopos(servoOpen);
+    } 
+    else {
+      servopos(servoClosed);
+    }
+  } 
+  else { 
+      servopos(servoOpen); //open the valve to dump helium
+  }
+}
+
 
 //******************************************
 //This reads the analog voltage from the 
@@ -148,16 +169,24 @@ void logit() {
   Serial.print(now());
   Serial.print(",Lat,");
   Serial.print(GPSlat);
+  Serial.print(",");
+  Serial.print(lat,DEC);
   Serial.print(",Long,");
   Serial.print(GPSlong);
+  Serial.print(",");
+  Serial.print(lon,DEC);
   Serial.print(",Alt,");
   Serial.print(GPSalt);
+  Serial.print(",");
+  Serial.print(alt,DEC);
   Serial.print(",Checksum,");
   Serial.println(GPSchecksum);
   Serial.print(",Raw Pressure,");
   Serial.print(sensorValue,DEC);
   Serial.print(",Adjusted Pressure,");
   Serial.print(pressure,DEC);
+  Serial.print(",Last Servo Position,");
+  Serial.print(lastservopos,DEC);
   Serial.print("\n");
 }
 
@@ -178,13 +207,13 @@ void servopos(int pos) {
       }
     }
     else //Else the servo position has decreased
+  {
+    for (int x = lastservopos; x >= pos; x--) //Slowly decrease the servo's position
     {
-      for (int x = lastservopos; x >= pos; x--) //Slowly decrease the servo's position
-      {
-        vservo.write(x);
-        delay(50);
-      }
+      vservo.write(x);
+      delay(50);
     }
+  }
   digitalWrite(4,LOW); //Turn the MOSFET off
   lastservopos = pos; // write the new servo position to the register
 }
@@ -215,6 +244,11 @@ void waitforcomms() {
       inData[index] = '\0'; // Keep the string NULL terminated
     }
   }
+  Serial.print("Data in: ");
+  for (int x = 0; x <= 59; x++) {
+    Serial.print(inData[x]);
+  }
+  Serial.print("\n");
   int pointer;
   while (inData[pointer] != 'B') pointer++; //Find the "B" in the datastring
   //Split the data up by string 
@@ -223,12 +257,16 @@ void waitforcomms() {
   if (CRC16(&inData[pointer]) == int(GPSchecksum)) { //this might die if the data is bad, use watchdog timer
     validcrc = true;
     //char inData[] = "UUUUBEN,18:27:01,52.00000,-0.27585,2981*9ACE";  
+    //$$ASTRA1,27728,14:10:18,5212.5118,00006.3573,522,32.1,485*172A
     lat = atof(GPSlat); //should be convert to float, change to atof
     lon = atof(GPSlong);
     alt = atof(GPSalt);
   } 
   else {
     validcrc = false;
+    Serial.print("Incorrect communications string. Result = ");
+    Serial.print(result);
+    Serial.print("\n");
   }
   //Do Checksum
   /*
@@ -353,10 +391,11 @@ float flightplan(){
 }
 
 //******************************************
-//Program to send the current time to the
-//serial port. Only used for debugging.
+//Program to log speed into moving average 
+//array.
 //******************************************
 void logspeed(){
+  floatindex++;
   if (floatindex >= 99) floatindex = 0; //Checks to see if we are near the end of the array so it can loop around
   float speednow = (alt - altlast)/(millis()-timelast)/1000; //Calculate the current speed
   speedarray[floatindex] = speednow; //Add the current speed to the array
@@ -393,6 +432,7 @@ uint16_t CRC16 (char *c)
   while (*c && *c != '*') crc = _crc_xmodem_update(crc, *c++);
   return crc;
 }
+
 
 
 
