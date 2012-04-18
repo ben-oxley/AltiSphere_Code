@@ -81,11 +81,11 @@ int pressure; //Integer value for pressure given by the mapping formula below
 TimeElements te; //Declare time object
 
 //Speed Variables
-float speedarray[100]; //Declare array to store speed values to create moving average
+float speedarray[20]; //Declare array to store speed values to create moving average
 int floatindex; //Declare the current place in the speedarray[]
 int timelast; //Initialise time of last valid recieved packet
 float altlast; //Initialise last recorded altitude variable
-#define MOVINGAVG 10 //Define size of moving average
+#define MOVINGAVG 10//Define size of moving average
 
 //Pre-Flight Variables
 #define datenow "030412" //Define date today (DDMMYY)
@@ -396,7 +396,7 @@ float flightplan(){
 //******************************************
 void logspeed(){
   floatindex++;
-  if (floatindex >= 99) floatindex = 0; //Checks to see if we are near the end of the array so it can loop around
+  if (floatindex >= 19) floatindex = 0; //Checks to see if we are near the end of the array so it can loop around
   float speednow = (alt - altlast)/(millis()-timelast)/1000; //Calculate the current speed
   speedarray[floatindex] = speednow; //Add the current speed to the array
   altlast = alt; // Stores the new altitude as the previous time
@@ -411,7 +411,7 @@ float speedavg(){
   float speedcalc; //initalise float for speed
   for (int i = 0; i <= MOVINGAVG ; i++) { //loop through the values to add together
     if ((floatindex - i) < 0) { // if the index drops off the bottom of the array
-      speedcalc += speedarray[ 100 - i + floatindex ]; // look at values decreasing from 99
+      speedcalc += speedarray[ 20 - i + floatindex ]; // look at values decreasing from 99
     } 
     else {
       speedcalc +=speedarray[floatindex - i];
