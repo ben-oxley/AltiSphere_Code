@@ -131,18 +131,26 @@ void loop() {
 
 //******************************************
 //This program controls the servo movements.
+//Max east direction 52.23 (5223.0000)
+//Max north direction 1.2000 (0120.0000)
+//Max south direction 0.5300 (0053.0000)
 //******************************************
 void servomove() {
-  if ((millis() - timelast) > 3600000) { //If the last GPS lock was an hour ago
-    if (speedavg() > flightplan()) {
-      servopos(servoOpen);
+  if ((millis() - timelast) < 3600000) { //If the last GPS lock was less than an hour ago
+    if ((lat < 5223) && (lon < 120) && (lon > 53)) {
+      if (speedavg() > flightplan()) {
+        servopos(servoOpen);
+      } 
+      else {
+        servopos(servoClosed);
+      }
     } 
     else {
-      servopos(servoClosed);
+      servopos(servoOpen);
     }
   } 
   else { 
-      servopos(servoOpen); //open the valve to dump helium
+    servopos(servoOpen); //open the valve to dump helium
   }
 }
 
@@ -432,6 +440,7 @@ uint16_t CRC16 (char *c)
   while (*c && *c != '*') crc = _crc_xmodem_update(crc, *c++);
   return crc;
 }
+
 
 
 
