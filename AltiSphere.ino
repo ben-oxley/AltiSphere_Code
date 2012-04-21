@@ -93,7 +93,7 @@ float altlast; //Initialise last recorded altitude variable
 int flightalt[] = {
   0,5000,10000,15000,20000,30000}; //Initialise variable array for altitude control points
 int flightspd[] = {
-  100,5,2,2,2,2}; //Initialise variable array for controlled speeds in m/s
+  100,5,4,2,2,2}; //Initialise variable array for controlled speeds in m/s
 
 void setup() {
   Serial.begin(9600); //Baud rate for logging to openLog
@@ -138,11 +138,17 @@ void loop() {
 void servomove() {
   if ((millis() - timelast) < 3600000) { //If the last GPS lock was less than an hour ago
     if ((lat < 5223) && (lon < 120) && (lon > 53)) {
-      if (speedavg() > flightplan()) {
-        servopos(servoOpen);
+      if (((millis() - timelast) > 60000) && (speedavg() > 1))
+      {
+        servopos(servoClosed);
       } 
       else {
-        servopos(servoClosed);
+        if (speedavg() > flightplan())
+        {
+          servopos(servoOpen);
+        } else {
+          servopos(servoClosed);
+        }   
       }
     } 
     else {
@@ -170,9 +176,9 @@ void readpressure() {
 //-tem. 
 //******************************************
 void logit() {
-  int timenow = millis();
+  //int timenow = millis();
   Serial.print("Since On,");
-  Serial.print(timenow, DEC);
+  Serial.print(millis());
   Serial.print(",Time,");
   Serial.print(now());
   Serial.print(",Lat,");
@@ -235,6 +241,9 @@ void servopos(int pos) {
 //******************************************
 void waitforcomms() {
   byte index = 0;
+  for (int y = 0; y <=59; y++) {
+    inData[y] = 0;
+  }
   while(commSerial.available() > 0)
   {
     char aChar = commSerial.read();
@@ -258,11 +267,47 @@ void waitforcomms() {
   }
   Serial.print("\n");
   int pointer;
-  while (inData[pointer] != 'B') pointer++; //Find the "B" in the datastring
-  //Split the data up by string 
-  int result = sscanf (inData,"%*[^','],%[^','],%[^','],%[^','],%[^'*']*%s",&GPStime, &GPSlat, &GPSlong, &GPSalt, &GPSchecksum);
-  //Pass the pointer to the program so that it can scroll through
-  if (CRC16(&inData[pointer]) == int(GPSchecksum)) { //this might die if the data is bad, use watchdog timer
+  int counter;
+  int marker = 0;
+  while ((inData[pointer] != 'B') && pointer <= 59) pointer++; //Find the "B" in the datastring
+  while ((inData[counter] != ',') && pointer <= 59) counter++;
+  counter++;
+  while ((inData[counter] != ',') && pointer <= 59) {   
+    GPStime[marker] = inData[counter];
+    marker++;
+    counter++;
+  }
+  counter++;
+  marker = 0;
+    while ((inData[counter] != ',') && pointer <= 59) {
+    GPSlat[marker] = inData[counter];
+    marker++;
+    counter++;
+  }
+  counter++;
+  marker = 0;
+    while ((inData[counter] != ',') && pointer <= 59) {   
+    GPSlong[marker] = inData[counter];
+    marker++;
+    counter++;
+  }
+  counter++;
+  marker = 0;
+    while ((inData[counter] != '*') && pointer <= 59) {  
+    GPSalt[marker] = inData[counter];
+    marker++;
+    counter++;
+  }
+  counter++;
+  for (marker = 0; marker <=3; marker++) {
+    GPSchecksum[marker] = inData[counter];
+    counter++;
+  }
+  int hexout = 0;
+  sscanf(GPSchecksum, "%X", &hexout);
+  //Serial.println(hexout);
+  //Serial.println(CRC16(&inData[pointer]));
+  if (CRC16(&inData[pointer]) == hexout) { //this might die if the data is bad, use watchdog timer
     validcrc = true;
     //char inData[] = "UUUUBEN,18:27:01,52.00000,-0.27585,2981*9ACE";  
     //$$ASTRA1,27728,14:10:18,5212.5118,00006.3573,522,32.1,485*172A
@@ -273,9 +318,10 @@ void waitforcomms() {
   else {
     validcrc = false;
     Serial.print("Incorrect communications string. Result = ");
-    Serial.print(result);
+    //Serial.print(result);
     Serial.print("\n");
   }
+  Serial.println("Conversion done");
   //Do Checksum
   /*
     do
@@ -440,8 +486,6 @@ uint16_t CRC16 (char *c)
   while (*c && *c != '*') crc = _crc_xmodem_update(crc, *c++);
   return crc;
 }
-
-
 
 
 
